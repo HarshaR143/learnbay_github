@@ -1,0 +1,299 @@
+package EducationLoanPortal.Education.Loan.Portal.service;
+
+import EducationLoanPortal.Education.Loan.Portal.exception.UserNotFoundException;
+import EducationLoanPortal.Education.Loan.Portal.model.Role;
+import EducationLoanPortal.Education.Loan.Portal.model.User;
+import EducationLoanPortal.Education.Loan.Portal.repository.RoleRepo;
+import EducationLoanPortal.Education.Loan.Portal.repository.UserRepo;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+@Service
+@Transactional
+public class UserService {
+
+    private final UserRepo userRepo;
+    private final RoleRepo roleRepo;
+    private final PasswordEncoder passwordEncoder;
+    private final MailService mailService;
+
+    @Autowired
+    public UserService(UserRepo userRepo, RoleRepo roleRepo, PasswordEncoder passwordEncoder,MailService mailService) {
+        this.userRepo = userRepo;
+        this.roleRepo = roleRepo;
+        this.passwordEncoder = passwordEncoder;
+        this.mailService=mailService;
+    }
+
+    public User addUser(User user) {
+        return userRepo.save(user);
+    }
+
+    public List<User> findAllUsers() {
+        return userRepo.findAll();
+    }
+
+    public User updateUser(User user) throws UserNotFoundException {
+        User existingUser = findUserById(user.getId());
+        existingUser.setFirstName(user.getFirstName());
+        existingUser.setLastName(user.getLastName());
+//        existingUser.setEmail(user.getEmail(user.getEmail());
+        existingUser.setPassword(user.getPassword());
+        existingUser.setAddress(user.getAddress());
+        existingUser.setPhoneNumber(user.getPhoneNumber());
+        return userRepo.save(existingUser);
+    }
+
+    public  User findUserById(Long id) throws UserNotFoundException {
+        return userRepo.findById(id)
+                .orElseThrow(() -> new UserNotFoundException("User with ID " + id + " not found"));
+    }
+
+    public void deleteUser(Long id) throws UserNotFoundException {
+        User user = findUserById(id);
+
+        // Get user email for recipient
+        String userEmail = user.getEmail();
+
+        // Delete the user
+        userRepo.delete(user);
+
+        // Compose email content
+        String subject = "Account Deleted";
+        String body = "Your account has been successfully deleted.";
+
+        // Send email
+        mailService.sendMail(userEmail, subject, body);
+    }
+
+
+    public User registerNewUser(User user) {
+        // Check if email already exists
+        if (userRepo.existsByEmail(user.getEmail())) {
+            throw new RuntimeException("Email already exists");
+        }
+
+        // Check if phone number already exists
+        if (userRepo.existsByPhoneNumber(user.getPhoneNumber())) {
+            throw new RuntimeException("Phone number already exists");
+        }
+
+        Role defaultRole = (Role) roleRepo.findByRoleName("User")
+                .orElseThrow(() -> new RuntimeException("Default role not found"));
+
+        Set<Role> userRoles = new HashSet<>();
+        userRoles.add(defaultRole);
+
+        user.setRole(userRoles);
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
+
+        return userRepo.save(user);
+    }
+
+
+    public String getEncodedPassword(String password) {
+        return passwordEncoder.encode(password);
+    }
+
+    public void initRoleAndUser() {
+        Role adminRole = (Role) roleRepo.findByRoleName("Admin").orElseGet(() -> {
+            Role role = new Role();
+            role.setRoleName("Admin");
+            role.setRoleDescription("Admin role");
+            return roleRepo.save(role);
+        });
+
+        Role userRole = (Role) roleRepo.findByRoleName("User").orElseGet(() -> {
+            Role role = new Role();
+            role.setRoleName("User");
+            role.setRoleDescription("Default role for newly created record");
+            return roleRepo.save(role);
+        });
+
+        User adminUser = new User();
+        adminUser.setPassword(getEncodedPassword("admin@pass"));
+        adminUser.setEmail("admin");
+        adminUser.setLastName("admin");
+        Set<Role> adminRoles = new HashSet<>();
+        adminRoles.add(adminRole);
+        adminUser.setRole(adminRoles);
+        userRepo.save(adminUser);
+
+        User user = new User();
+        user.setEmail("udayagiricharankumar@gmail.com");
+        user.setPassword(getEncodedPassword("udayagiricharankumar@gmail.com"));
+        user.setFirstName("Charan");
+        user.setLastName("Udayagiri");
+        Set<Role> userRoles = new HashSet<>();
+        userRoles.add(userRole);
+        user.setRole(userRoles);
+        userRepo.save(user);
+    }
+}
+
+
+package EducationLoanPortal.Education.Loan.Portal.service;
+
+import EducationLoanPortal.Education.Loan.Portal.exception.ResourceNotFoundException;
+import EducationLoanPortal.Education.Loan.Portal.exception.UserNotFoundException;
+import EducationLoanPortal.Education.Loan.Portal.model.Loan;
+import EducationLoanPortal.Education.Loan.Portal.model.Payment;
+import EducationLoanPortal.Education.Loan.Portal.repository.LoanRepo;
+import EducationLoanPortal.Education.Loan.Portal.repository.PaymentRepo;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class PaymentService {
+
+    private  final PaymentRepo paymentRepo;
+
+   private final LoanRepo loanRepo;
+
+    private final MailService mailService;
+
+    @Autowired
+    public PaymentService(MailService mailService,LoanRepo loanRepo, PaymentRepo paymentRepo) {
+        this.mailService = mailService;
+        this.paymentRepo=paymentRepo;
+        this.loanRepo=loanRepo;
+
+        // Other constructor logic
+    }
+    public List<Payment> getPaymentsByLoanId(Long loan_id){
+        return paymentRepo.findByLoanId(loan_id);
+    }
+    public Payment createPayment(Payment payment) {
+        Payment createdPayment = paymentRepo.save(payment);
+
+        // Retrieve loan details
+        Long loanId = payment.getLoan_id();
+        Optional<Loan> loanOptional = loanRepo.findById(loanId);
+        if (loanOptional.isEmpty()) {
+            throw new RuntimeException("Loan not found with id: " + loanId);
+        }
+        Loan loan = loanOptional.get();
+
+        // Get user email for recipient
+        String userEmail = loan.getUser().getEmail();
+
+        // Compose email content
+        String subject = "Payment Created";
+        String body = "Payment has been successfully created.\n\n" +
+                "Payment Details:\n" +
+                "Loan ID: " + createdPayment.getLoan_id() + "\n" +
+                "Payment Amount: " + createdPayment.getAmount() + "\n" +
+                "Payment Date: " + createdPayment.getPaymentDate() + "\n" ;
+
+
+        // Send email
+        mailService.sendMail(userEmail, subject, body);
+
+        return createdPayment;
+    }
+
+
+    public Payment getPaymentById(Long id) throws ResourceNotFoundException{
+        Optional<Payment> payment = paymentRepo.getPaymentById(id);
+        if (payment.isEmpty()){
+            throw new ResourceNotFoundException("Payment not fount with payment id: "+id);
+        }
+        else {
+            return payment.get();
+        }
+    }
+
+    public Payment updatePaymentById(Long id, Payment updatedPayment) {
+        Optional<Payment> existingPayment = paymentRepo.findById(id);
+        if (!existingPayment.isPresent()) {
+            throw new RuntimeException("Payment not found with this id: " + id);
+        } else {
+            Payment payment = existingPayment.get();
+
+            payment.setAmount(updatedPayment.getAmount());
+            payment.setPaymentDate(updatedPayment.getPaymentDate());
+            Payment savedPayment = paymentRepo.save(payment);
+
+            // Retrieve loan details
+            Long loanId = savedPayment.getLoan_id();
+            Optional<Loan> loanOptional = loanRepo.findById(loanId);
+            if (loanOptional.isEmpty()) {
+                throw new RuntimeException("Loan not found with id: " + loanId);
+            }
+            Loan loan = loanOptional.get();
+
+            // Get user email for recipient
+            String userEmail = loan.getUser().getEmail();
+
+            // Compose email content
+            String subject = "Payment Updated";
+            String body = "Payment has been successfully updated.\n\n" +
+                    "Payment Details:\n" +
+                    "Loan ID: " + savedPayment.getLoan_id() + "\n" +
+                    "Payment Amount: " + savedPayment.getAmount() + "\n" +
+                    "Payment Date: " + savedPayment.getPaymentDate() + "\n";
+
+            // Send email
+            mailService.sendMail(userEmail, subject, body);
+
+            return savedPayment;
+        }
+    }
+
+
+    public Payment updatePaymentStatusById(Long id, Payment updatedPayment) {
+        Optional<Payment> existingPayment = paymentRepo.findById(id);
+        if (!existingPayment.isPresent()) {
+            throw new RuntimeException("Payment not found with this id: " + id);
+        } else {
+            Payment payment = existingPayment.get();
+            payment.setStatus("Completed");
+            Payment savedPayment = paymentRepo.save(payment);
+
+            // Retrieve loan details
+            Long loanId = savedPayment.getLoan_id();
+            Optional<Loan> loanOptional = loanRepo.findById(loanId);
+            if (loanOptional.isEmpty()) {
+                throw new RuntimeException("Loan not found with id: " + loanId);
+            }
+            Loan loan = loanOptional.get();
+
+            // Get user email for recipient
+            String userEmail = loan.getUser().getEmail();
+
+            // Compose email content
+            String subject = "Payment Status Updated";
+            String body = "Payment status has been successfully updated.\n\n" +
+                    "Payment Details:\n" +
+                    "Loan ID: " + savedPayment.getLoan_id() + "\n" +
+                    "Payment Amount: " + savedPayment.getAmount() + "\n" +
+                    "Payment Date: " + savedPayment.getPaymentDate() + "\n" +
+                    "Payment Status: " + savedPayment.getStatus() + "\n";
+
+            // Send email
+            mailService.sendMail(userEmail, subject, body);
+
+            return savedPayment;
+        }
+    }
+
+
+    public List<Payment> getAllPayments() {
+        return paymentRepo.findAll();
+    }
+
+    public void deletePaymentById(Long id) {
+        paymentRepo.deleteById(id);
+    }
+
+}
